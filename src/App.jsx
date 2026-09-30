@@ -84,7 +84,32 @@ function App() {
 }
 
 function Onboarding({ onSave }) {
-  return <section className="onboarding page-enter"><div className="eyebrow">CHÀO MỪNG ĐẾN VỚI NGÀY ĐỎ</div><h1>Hiểu cơ thể,<br /><em>yêu bản thân hơn.</em></h1><p className="hero-copy">Một nơi riêng tư để theo dõi chu kỳ và lắng nghe những thay đổi nhỏ mỗi ngày.</p><div className="onboarding-card"><div className="mini-orbit"><span>♥</span></div><h2>Bắt đầu theo dõi</h2><p>Nhập thông tin kỳ kinh gần nhất để xem những ngày sắp tới.</p><PeriodForm settings={{ cycleLength: 28, periodLength: 5 }} onSave={onSave} /></div><Disclaimer /></section>
+  return (
+			<section className="onboarding page-enter" style={{ paddingBottom: 6 }}>
+				<div className="eyebrow">CHÀO MỪNG ĐẾN VỚI NGÀY ĐỎ</div>
+				<h1 style={{ paddingTop: 12 }}>
+					Hiểu cơ thể
+					<br />
+					<em>yêu bản thân hơn.</em>
+				</h1>
+				<p className="hero-copy">
+					Một nơi riêng tư để theo dõi chu kỳ và lắng nghe những thay đổi nhỏ
+					mỗi ngày.
+				</p>
+				<div className="onboarding-card">
+					<div className="mini-orbit">
+						<span>♥</span>
+					</div>
+					<h2>Bắt đầu theo dõi</h2>
+					<p>Nhập thông tin kỳ kinh gần nhất để xem những ngày sắp tới.</p>
+					<PeriodForm
+						settings={{ cycleLength: 28, periodLength: 5 }}
+						onSave={onSave}
+					/>
+				</div>
+				<Disclaimer />
+			</section>
+		);
 }
 
 function Dashboard({ prediction, status, cycleDay, settings, onAdd, onCalendar, onLog }) {
