@@ -1,7 +1,7 @@
 import { addDays, dateDifference, isBetween, parseDateKey, todayKey } from './dateUtils.js'
 
-const MIN_CYCLE_LENGTH = 1
-const MAX_CYCLE_LENGTH = 366
+const MIN_CYCLE_LENGTH = 15
+const MAX_CYCLE_LENGTH = 60
 const MIN_PERIOD_LENGTH = 1
 const MAX_PERIOD_LENGTH = 31
 const MAX_PREDICTIONS = 120
@@ -33,6 +33,20 @@ function periodEnd(log, fallbackLength = 5) {
   return integerInRange(length, MIN_PERIOD_LENGTH, MAX_PERIOD_LENGTH) ? addDays(log.startDate, length - 1) : null
 }
 
+function predictionConfig(latest, cycleLength, periodLength) {
+  if (!validLog(latest)) return null
+  const resolvedCycleLength = integerInRange(latest.cycleLength, MIN_CYCLE_LENGTH, MAX_CYCLE_LENGTH)
+    ? latest.cycleLength
+    : cycleLength
+  const resolvedPeriodLength = integerInRange(latest.periodLength, MIN_PERIOD_LENGTH, MAX_PERIOD_LENGTH)
+    ? latest.periodLength
+    : periodLength
+  return integerInRange(resolvedCycleLength, MIN_CYCLE_LENGTH, MAX_CYCLE_LENGTH)
+    && integerInRange(resolvedPeriodLength, MIN_PERIOD_LENGTH, MAX_PERIOD_LENGTH)
+    ? { cycleLength: resolvedCycleLength, periodLength: resolvedPeriodLength }
+    : null
+}
+
 export function sortLogs(logs) {
   if (!Array.isArray(logs)) return []
   return logs.filter(validLog).slice().sort((a, b) => b.startDate.localeCompare(a.startDate))
@@ -41,7 +55,8 @@ export function sortLogs(logs) {
 export function getLatestLog(logs) { return sortLogs(logs)[0] || null }
 
 export function getPredictions(latest, cycleLength, periodLength, count = 6, range) {
-  if (!validLog(latest) || !integerInRange(cycleLength, MIN_CYCLE_LENGTH, MAX_CYCLE_LENGTH) || !integerInRange(periodLength, MIN_PERIOD_LENGTH, MAX_PERIOD_LENGTH)) return []
+  const config = predictionConfig(latest, cycleLength, periodLength)
+  if (!config) return []
   let options = {}
   if (count && typeof count === 'object') options = count
   else options = { ...(range && typeof range === 'object' ? range : {}), count }
@@ -55,8 +70,8 @@ export function getPredictions(latest, cycleLength, periodLength, count = 6, ran
 
   const predictions = []
   for (let index = 1; index <= boundedCount; index += 1) {
-    const startDate = addDays(latest.startDate, cycleLength * index)
-    const endDate = startDate ? addDays(startDate, periodLength - 1) : null
+    const startDate = addDays(latest.startDate, config.cycleLength * index)
+    const endDate = startDate ? addDays(startDate, config.periodLength - 1) : null
     if (!startDate || !endDate) break
     if ((!from || dateDifference(from, endDate) >= 0) && (!to || dateDifference(startDate, to) >= 0)) {
       predictions.push({ startDate, endDate, index, cycleOffset: index })
@@ -66,9 +81,10 @@ export function getPredictions(latest, cycleLength, periodLength, count = 6, ran
 }
 
 export function getCurrentPrediction(latest, cycleLength, periodLength) {
-  if (!validLog(latest) || !integerInRange(cycleLength, MIN_CYCLE_LENGTH, MAX_CYCLE_LENGTH) || !integerInRange(periodLength, MIN_PERIOD_LENGTH, MAX_PERIOD_LENGTH)) return null
-  const startDate = addDays(latest.startDate, cycleLength)
-  return startDate ? { startDate, endDate: addDays(startDate, periodLength - 1), cycleOffset: 1, index: 1 } : null
+  const config = predictionConfig(latest, cycleLength, periodLength)
+  if (!config) return null
+  const startDate = addDays(latest.startDate, config.cycleLength)
+  return startDate ? { startDate, endDate: addDays(startDate, config.periodLength - 1), cycleOffset: 1, index: 1 } : null
 }
 
 export function getStatus(latest, cycleLength, periodLength, today = todayKey()) {
