@@ -49,3 +49,28 @@ test('actual periods stay independent when the current period is edited', async 
   starts = await page.evaluate(() => JSON.parse(localStorage.getItem('day-red-state-v1')).state.periodLogs.map((log) => log.startDate).sort())
   expect(starts).toEqual([editedDate, previousDate].sort())
 })
+
+test('calendar can record the selected date as an actual period start', async ({ page }) => {
+  const previousDate = dateKey(-10)
+  const today = dateKey()
+
+  await page.locator('#period-date').fill(previousDate)
+  await page.getByRole('button', { name: /^28/ }).click()
+  await page.getByRole('button', { name: /Lưu ngày bắt đầu thực tế/ }).click()
+  await page.locator('.nav-item').filter({ hasText: 'Lịch' }).click()
+
+  const selectedDay = page.locator('.day-cell.selected')
+  await expect(selectedDay).toHaveAttribute('aria-pressed', 'true')
+  await expect(selectedDay).toHaveAttribute('aria-current', 'date')
+  await expect(page.getByRole('button', { name: /Ghi ngày bắt đầu thực tế cho ngày đã chọn/ })).toBeVisible()
+  await page.getByRole('button', { name: /Ghi ngày bắt đầu thực tế cho ngày đã chọn/ }).click()
+  await expect(page.getByRole('dialog', { name: 'Ghi ngày bắt đầu thực tế' })).toBeVisible()
+  await expect(page.locator('#period-date')).toHaveValue(today)
+  await page.getByRole('button', { name: /Lưu ngày bắt đầu thực tế/ }).click()
+
+  await expect(page.getByText('Đã lưu ngày bắt đầu thực tế')).toBeVisible()
+  const state = await page.evaluate(() => JSON.parse(localStorage.getItem('day-red-state-v1')).state)
+  expect(state.periodLogs.filter((log) => log.startDate === today)).toHaveLength(1)
+  await expect(page.locator('.day-cell.confirmed').first()).toBeVisible()
+  await expect(page.getByRole('button', { name: /Chỉnh ngày bắt đầu cho ngày đã chọn/ })).toBeVisible()
+})
