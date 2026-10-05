@@ -15,7 +15,18 @@ function installStorage(initial = null, throwing = false) {
 test('storage sanitizes malformed logs and writes a versioned envelope', () => {
   installStorage(JSON.stringify({ settings: { cycleLength: 'bad', periodLength: 999 }, periodLogs: [{ startDate: 'bad' }, { startDate: '2024-01-01', endDate: '2024-01-05', periodLength: 5 }], dailyLogs: [{ date: 'nope' }] }))
   const state = loadState()
-  assert.deepEqual(state.settings, { cycleLength: 28, periodLength: 5 })
+  assert.deepEqual(state.settings, {
+    cycleLength: 28,
+    periodLength: 5,
+    reminders: {
+      periodEnabled: true,
+      waterEnabled: true,
+      leadDays: 3,
+      waterTimes: ['09:00', '13:00', '17:00'],
+      emailEnabled: false,
+      emailAddress: 'yennhivo03022000@gmail.com',
+    },
+  })
   assert.equal(state.periodLogs.length, 1)
   assert.equal(state.periodLogs[0].cycleLength, 28)
   assert.equal(state.periodLogs[0].id, '2024-01-01-1')
@@ -35,6 +46,33 @@ test('per-log cycle length survives settings changes', () => {
   const loaded = loadState()
   assert.equal(loaded.settings.cycleLength, 40)
   assert.equal(loaded.periodLogs[0].cycleLength, 28)
+})
+
+test('email reminder settings survive a storage round trip', () => {
+  installStorage()
+  const state = loadState()
+  state.settings.reminders.emailEnabled = true
+  state.settings.reminders.emailAddress = 'person@example.com'
+  assert.equal(saveState(state), true)
+  const loaded = loadState()
+  assert.equal(loaded.settings.reminders.emailEnabled, true)
+  assert.equal(loaded.settings.reminders.emailAddress, 'person@example.com')
+})
+
+test('invalid email settings fall back to the configured recipient', () => {
+  installStorage(JSON.stringify({
+    version: 3,
+    state: {
+      settings: {
+        cycleLength: 28,
+        periodLength: 5,
+        reminders: { emailEnabled: true, emailAddress: 'invalid' },
+      },
+    },
+  }))
+  const state = loadState()
+  assert.equal(state.settings.reminders.emailEnabled, true)
+  assert.equal(state.settings.reminders.emailAddress, 'yennhivo03022000@gmail.com')
 })
 
 test('storage failures do not crash and expose unavailable warning', () => {
