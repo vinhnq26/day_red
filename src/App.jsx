@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { addDays, addMonths, dateDifference, formatDate, getMonthGrid, monthLabel, todayKey } from './utils/dateUtils'
-import { getAllPeriodDates, getCurrentPrediction, getCycleDay, getLatestLog, getPredictions, getStatus, sortLogs } from './utils/cycleUtils'
+import { getAllPeriodDates, getAutoConfirmedPeriod, getCurrentPrediction, getCycleDay, getLatestLog, getPredictions, getStatus, sortLogs } from './utils/cycleUtils'
 import { clearState, defaultState, loadState, saveState } from './utils/storage'
 
 const symptoms = [
@@ -11,10 +11,11 @@ const weekdays = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN']
 const uid = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`
 
 function App() {
+  const [today, setToday] = useState(todayKey)
   const [state, setState] = useState(loadState)
   const [tab, setTab] = useState('home')
-  const [month, setMonth] = useState(todayKey().slice(0, 7))
-  const [selectedDate, setSelectedDate] = useState(todayKey())
+  const [month, setMonth] = useState(today.slice(0, 7))
+  const [selectedDate, setSelectedDate] = useState(today)
   const [showPeriodForm, setShowPeriodForm] = useState(false)
   const [periodFormDate, setPeriodFormDate] = useState(null)
   const [showLogForm, setShowLogForm] = useState(false)
@@ -22,13 +23,43 @@ function App() {
   const [toast, setToast] = useState('')
 
   useEffect(() => { saveState(state) }, [state])
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setToday((current) => {
+        const next = todayKey()
+        return current === next ? current : next
+      })
+    }, 60_000)
+    return () => clearInterval(timer)
+  }, [])
   useEffect(() => { if (toast) { const timer = setTimeout(() => setToast(''), 2600); return () => clearTimeout(timer) } }, [toast])
 
   const latest = getLatestLog(state.periodLogs)
   const prediction = getCurrentPrediction(latest, state.settings.cycleLength, state.settings.periodLength)
+  const autoConfirmedPeriod = getAutoConfirmedPeriod(latest, state.settings.cycleLength, state.settings.periodLength, today)
   const predictions = getPredictions(latest, state.settings.cycleLength, state.settings.periodLength, 8)
-  const status = getStatus(latest, state.settings.cycleLength, state.settings.periodLength)
-  const cycleDay = getCycleDay(latest)
+  const status = getStatus(latest, state.settings.cycleLength, state.settings.periodLength, today)
+  const cycleDay = getCycleDay(latest, today)
+  useEffect(() => {
+    if (!autoConfirmedPeriod) return
+    setState((current) => {
+      const currentLatest = getLatestLog(current.periodLogs)
+      const currentPeriod = getAutoConfirmedPeriod(currentLatest, current.settings.cycleLength, current.settings.periodLength, today)
+      if (!currentPeriod || current.periodLogs.some((log) => log.startDate === currentPeriod.startDate)) return current
+      return {
+        ...current,
+        periodLogs: [{
+          id: `auto-${currentPeriod.startDate}`,
+          startDate: currentPeriod.startDate,
+          endDate: currentPeriod.endDate,
+          periodLength: currentPeriod.periodLength,
+          cycleLength: currentPeriod.cycleLength,
+          symptoms: [],
+          note: '',
+        }, ...current.periodLogs],
+      }
+    })
+  }, [autoConfirmedPeriod?.startDate, autoConfirmedPeriod?.endDate, autoConfirmedPeriod?.cycleLength, autoConfirmedPeriod?.periodLength, today])
   const activeSettings = latest ? { cycleLength: latest.cycleLength || state.settings.cycleLength, periodLength: latest.periodLength || state.settings.periodLength } : state.settings
   const dates = getAllPeriodDates(state.periodLogs, predictions)
   const hasData = state.periodLogs.length > 0

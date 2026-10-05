@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { getAllPeriodDates, getCurrentPrediction, getLatestLog, getPredictions, getStatus, sortLogs } from './cycleUtils.js'
+import { getAllPeriodDates, getAutoConfirmedPeriod, getCurrentPrediction, getLatestLog, getPredictions, getStatus, sortLogs } from './cycleUtils.js'
 
 const latest = { startDate: '2024-01-01', endDate: '2024-01-05', periodLength: 5 }
 
@@ -17,6 +17,32 @@ test('status distinguishes current actual period, due today, and overdue', () =>
   assert.equal(getStatus(latest, 28, 5, '2024-01-29').type, 'today')
   assert.equal(getStatus(latest, 28, 5, '2024-02-01').type, 'overdue')
   assert.equal(getStatus({ ...latest, endDate: '2024-01-08', periodLength: 8 }, 28, 5, '2024-01-06').type, 'period')
+})
+
+test('auto-confirmation only returns a period when the prediction is today', () => {
+  assert.deepEqual(getAutoConfirmedPeriod(latest, 28, 5, '2024-01-29'), {
+    startDate: '2024-01-29',
+    endDate: '2024-02-02',
+    cycleOffset: 1,
+    index: 1,
+    cycleLength: 28,
+    periodLength: 5,
+  })
+  assert.equal(getAutoConfirmedPeriod(latest, 28, 5, '2024-01-28'), null)
+  assert.equal(getAutoConfirmedPeriod(latest, 28, 5, '2024-01-30'), null)
+  assert.deepEqual(getAutoConfirmedPeriod({ ...latest, cycleLength: 30, periodLength: 4 }, 20, 2, '2024-01-31'), {
+    startDate: '2024-01-31',
+    endDate: '2024-02-03',
+    cycleOffset: 1,
+    index: 1,
+    cycleLength: 30,
+    periodLength: 4,
+  })
+})
+
+test('auto-confirmation does not overlap an active actual period', () => {
+  const longPeriod = { startDate: '2024-01-01', endDate: '2024-01-31', periodLength: 31, cycleLength: 28 }
+  assert.equal(getAutoConfirmedPeriod(longPeriod, 28, 31, '2024-01-29'), null)
 })
 
 test('corrupt logs are ignored and period sets are bounded', () => {

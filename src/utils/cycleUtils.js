@@ -87,6 +87,22 @@ export function getCurrentPrediction(latest, cycleLength, periodLength) {
   return startDate ? { startDate, endDate: addDays(startDate, config.periodLength - 1), cycleOffset: 1, index: 1 } : null
 }
 
+export function getAutoConfirmedPeriod(latest, cycleLength, periodLength, today = todayKey()) {
+  if (!validDate(today)) return null
+  const prediction = getCurrentPrediction(latest, cycleLength, periodLength)
+  if (!prediction || prediction.startDate !== today) return null
+  if (getStatus(latest, cycleLength, periodLength, today).type !== 'today') return null
+  const resolvedCycleLength = integerInRange(latest?.cycleLength, MIN_CYCLE_LENGTH, MAX_CYCLE_LENGTH)
+    ? latest.cycleLength
+    : cycleLength
+  const resolvedPeriodLength = integerInRange(latest?.periodLength, MIN_PERIOD_LENGTH, 15)
+    ? latest.periodLength
+    : periodLength
+  if (!integerInRange(resolvedCycleLength, MIN_CYCLE_LENGTH, MAX_CYCLE_LENGTH)
+    || !integerInRange(resolvedPeriodLength, MIN_PERIOD_LENGTH, 15)) return null
+  return { ...prediction, cycleLength: resolvedCycleLength, periodLength: resolvedPeriodLength }
+}
+
 export function getStatus(latest, cycleLength, periodLength, today = todayKey()) {
   if (!validLog(latest)) return { type: 'empty', label: 'Chưa thiết lập' }
   if (!validDate(today)) return { type: 'empty', label: 'Chưa thiết lập' }

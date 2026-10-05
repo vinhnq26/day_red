@@ -74,3 +74,51 @@ test('calendar can record the selected date as an actual period start', async ({
   await expect(page.locator('.day-cell.confirmed').first()).toBeVisible()
   await expect(page.getByRole('button', { name: /Chỉnh ngày bắt đầu cho ngày đã chọn/ })).toBeVisible()
 })
+
+test('automatically confirms a prediction that falls today', async ({ page }) => {
+  const previousDate = dateKey(-28)
+  const previousEndDate = dateKey(-24)
+  const today = dateKey()
+  await page.evaluate(({ previousDate, previousEndDate }) => {
+    localStorage.setItem('day-red-state-v1', JSON.stringify({
+      version: 3,
+      state: {
+        settings: { cycleLength: 40, periodLength: 7 },
+        periodLogs: [{ id: 'previous', startDate: previousDate, endDate: previousEndDate, periodLength: 5, cycleLength: 28, symptoms: [], note: '' }],
+        dailyLogs: [],
+      },
+    }))
+  }, { previousDate, previousEndDate })
+  await page.reload()
+
+  await page.waitForFunction((today) => {
+    const stored = JSON.parse(localStorage.getItem('day-red-state-v1'))
+    return stored?.state?.periodLogs?.some((log) => log.startDate === today)
+  }, today)
+  await expect(page.getByText('Đang trong kỳ')).toBeVisible()
+
+  let state = await page.evaluate(() => JSON.parse(localStorage.getItem('day-red-state-v1')).state)
+  expect(state.periodLogs.filter((log) => log.startDate === today)).toHaveLength(1)
+  expect(state.periodLogs.find((log) => log.id === 'previous')).toMatchObject({ startDate: previousDate, cycleLength: 28 })
+  expect(state.periodLogs.find((log) => log.startDate === today)).toMatchObject({ endDate: dateKey(4), cycleLength: 28, periodLength: 5 })
+
+  await page.reload()
+  await page.waitForFunction((today) => {
+    const stored = JSON.parse(localStorage.getItem('day-red-state-v1'))
+    return stored?.state?.periodLogs?.filter((log) => log.startDate === today).length === 1
+  }, today)
+  state = await page.evaluate(() => JSON.parse(localStorage.getItem('day-red-state-v1')).state)
+  expect(state.periodLogs.filter((log) => log.startDate === today)).toHaveLength(1)
+
+  const adjustedDate = dateKey(-1)
+  await page.locator('.nav-item').filter({ hasText: 'Nhật ký' }).click()
+  await page.getByRole('button', { name: 'Chỉnh sửa' }).first().click()
+  await page.locator('#period-date').fill(adjustedDate)
+  await page.getByRole('button', { name: /Lưu thay đổi/ }).click()
+  await page.waitForFunction(({ today, adjustedDate }) => {
+    const stored = JSON.parse(localStorage.getItem('day-red-state-v1'))
+    const logs = stored?.state?.periodLogs || []
+    return logs.filter((log) => log.startDate === today).length === 0
+      && logs.filter((log) => log.startDate === adjustedDate).length === 1
+  }, { today, adjustedDate })
+})
