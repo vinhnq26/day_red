@@ -24,7 +24,7 @@ test('storage sanitizes malformed logs and writes a versioned envelope', () => {
       leadDays: 3,
       waterTimes: ['09:00', '13:00', '17:00'],
       emailEnabled: false,
-      emailAddress: 'yennhivo03022000@gmail.com',
+      emailAddress: '',
     },
   })
   assert.equal(state.periodLogs.length, 1)
@@ -48,10 +48,31 @@ test('per-log cycle length survives settings changes', () => {
   assert.equal(loaded.periodLogs[0].cycleLength, 28)
 })
 
+test('profile details survive a storage round trip and mirror the reminder recipient', () => {
+  installStorage()
+  const state = loadState()
+  state.profile = { name: '  Linh  ', email: 'person@example.com' }
+  state.settings.reminders.emailAddress = 'person@example.com'
+  assert.equal(saveState(state), true)
+  const loaded = loadState()
+  assert.deepEqual(loaded.profile, { name: 'Linh', email: 'person@example.com' })
+  assert.equal(loaded.settings.reminders.emailAddress, 'person@example.com')
+})
+
+test('profile email accepts an empty value', () => {
+  installStorage()
+  const state = loadState()
+  state.profile = { name: 'Linh', email: '' }
+  state.settings.reminders.emailAddress = ''
+  assert.equal(saveState(state), true)
+  assert.deepEqual(loadState().profile, { name: 'Linh', email: '' })
+})
+
 test('email reminder settings survive a storage round trip', () => {
   installStorage()
   const state = loadState()
   state.settings.reminders.emailEnabled = true
+  state.profile.email = 'person@example.com'
   state.settings.reminders.emailAddress = 'person@example.com'
   assert.equal(saveState(state), true)
   const loaded = loadState()
@@ -59,7 +80,7 @@ test('email reminder settings survive a storage round trip', () => {
   assert.equal(loaded.settings.reminders.emailAddress, 'person@example.com')
 })
 
-test('invalid email settings fall back to the configured recipient', () => {
+test('invalid email settings fall back to an empty recipient when no profile email exists', () => {
   installStorage(JSON.stringify({
     version: 3,
     state: {
@@ -72,7 +93,7 @@ test('invalid email settings fall back to the configured recipient', () => {
   }))
   const state = loadState()
   assert.equal(state.settings.reminders.emailEnabled, true)
-  assert.equal(state.settings.reminders.emailAddress, 'yennhivo03022000@gmail.com')
+  assert.equal(state.settings.reminders.emailAddress, '')
 })
 
 test('v4 data migrates without losing logs or reminder history', () => {
@@ -81,7 +102,7 @@ test('v4 data migrates without losing logs or reminder history', () => {
     reminderHistory: ['period:2024-01-29'],
   } }))
   const state = loadState()
-  assert.equal(STORAGE_VERSION, 5)
+  assert.equal(STORAGE_VERSION, 6)
   assert.equal(state.periodLogs[0].id, 'saved')
   assert.deepEqual(state.reminderHistory, ['period:2024-01-29'])
   assert.deepEqual(state.nativeNotificationSchedule, [])

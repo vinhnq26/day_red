@@ -1,6 +1,15 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { normalizeConfig } from '../config/appConfig.js'
 import { sendReminderEmail, validEmail } from './emailService.js'
+
+const personalConfig = normalizeConfig({
+  VITE_APP_VARIANT: 'personal',
+  VITE_APP_NAME: 'Ngày Đỏ',
+  VITE_EMAILJS_SERVICE_ID: 'service_0id1myu',
+  VITE_EMAILJS_TEMPLATE_ID: 'template_rq0w2am',
+  VITE_EMAILJS_PUBLIC_KEY: 'P_OGJ56eorjovyNbb',
+})
 
 test('email adapter validates recipient addresses', async () => {
   assert.equal(validEmail('yennhivo03022000@gmail.com'), true)
@@ -25,6 +34,7 @@ test('email adapter sends the configured reminder payload', async () => {
 
   try {
     assert.deepEqual(await sendReminderEmail({
+      config: personalConfig,
       toEmail: 'yennhivo03022000@gmail.com',
       reminderType: 'Kỳ kinh sắp tới',
       message: 'Kỳ kinh tiếp theo có thể bắt đầu sau 3 ngày.',
@@ -56,6 +66,7 @@ test('email adapter returns a safe error when EmailJS fails', async () => {
 
   try {
     assert.deepEqual(await sendReminderEmail({
+      config: personalConfig,
       toEmail: 'yennhivo03022000@gmail.com',
       reminderType: 'Kỳ kinh sắp tới',
       message: 'Nhắc nhở',

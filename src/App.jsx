@@ -25,7 +25,7 @@ import {
 	saveState,
 } from "./utils/storage";
 import { getReminderCandidates } from "./utils/reminders";
-import { sendReminderEmail } from "./utils/emailService";
+import { sendReminderEmail, validEmail } from "./utils/emailService";
 import {
 	checkNotificationPermission,
 	createBoundedNativeNotificationPlugin,
@@ -38,6 +38,7 @@ import {
 	withNativeNotificationTimeout,
 } from "./utils/notifications";
 import { buildNativeReminderPlan, createNativeReminderReconciler } from "./utils/nativeReminderSchedule";
+import { appConfig } from "./config/appConfig";
 
 const symptoms = [
 	["cramps", "Đau bụng"],
@@ -299,10 +300,17 @@ function App() {
 		};
 	}, [today, notificationPermission, state.reminderHistory, state.settings, latest?.startDate, hasData]);
 
-	const updateSettings = (settings) => {
+	const updateSettings = (settings, profile = null) => {
 		setState((current) => ({
 			...current,
-			settings: { ...current.settings, ...settings },
+			profile: profile ? { name: profile.name.trim(), email: profile.email.trim() } : current.profile,
+			settings: {
+				...current.settings,
+				...settings,
+				reminders: profile
+					? { ...current.settings.reminders, ...(settings.reminders || {}), emailAddress: profile.email }
+					: settings.reminders || current.settings.reminders,
+			},
 		}));
 		setToast("Đã lưu thay đổi");
 	};
@@ -330,10 +338,21 @@ function App() {
 			note: form.note || "",
 		};
 		const isNewLog = !form.id;
+		const profile = form.profile
+			? { name: form.profile.name.trim(), email: form.profile.email.trim() }
+			: null;
 		setState((current) => ({
 			...current,
+			profile: profile || current.profile,
 			settings: isNewLog
-				? { ...current.settings, cycleLength, periodLength }
+				? {
+					...current.settings,
+					cycleLength,
+					periodLength,
+					reminders: profile
+						? { ...current.settings.reminders, emailAddress: profile.email }
+						: current.settings.reminders,
+				}
 				: current.settings,
 			periodLogs: form.id
 				? current.periodLogs.map((log) => (log.id === form.id ? newLog : log))
@@ -422,7 +441,7 @@ function App() {
 				? "Đã cho phép thông báo và cập nhật lịch nhắc"
 				: permission === "denied"
 					? nativePlatform
-						? "Hãy bật thông báo cho Day Red trong Cài đặt iPhone → Thông báo."
+						? `Hãy bật thông báo cho ${appConfig.nativeAppName} trong Cài đặt iPhone → Thông báo.`
 						: "Hãy bật lại thông báo trong cài đặt trình duyệt."
 					: "Thiết bị chưa cho phép hoặc chưa hỗ trợ thông báo.");
 		} catch (error) {
@@ -445,7 +464,7 @@ function App() {
 			const shown = permission === "granted" && await showTestNotification();
 			setNotificationMessage(shown
 				? nativePlatform ? "Đã đặt lịch thử sau 5 giây. Hãy khóa màn hình để kiểm tra." : "Đã gửi thông báo thử"
-				: nativePlatform ? "Hãy bật thông báo trong Cài đặt iPhone → Thông báo → Day Red." : "Trình duyệt chưa cho phép hoặc không hỗ trợ thông báo.");
+				: nativePlatform ? `Hãy bật thông báo trong Cài đặt iPhone → Thông báo → ${appConfig.nativeAppName}.` : "Trình duyệt chưa cho phép hoặc không hỗ trợ thông báo.");
 		} catch (error) {
 			setNotificationMessage(`Không thể đặt lịch thử: ${error.message}`);
 		} finally {
@@ -475,7 +494,7 @@ function App() {
 				<div className="brand">
 					<span className="brand-mark">♥</span>
 					<div>
-						<strong>Ngày Đỏ</strong>
+						<strong>{appConfig.appName}</strong>
 						<span>theo dõi thật nhẹ nhàng</span>
 					</div>
 				</div>
@@ -490,11 +509,12 @@ function App() {
 
 			<main className="main-content">
 				{!hasData && tab === "home" ? (
-					<Onboarding onSave={addPeriod} />
+					<Onboarding onSave={addPeriod} profile={state.profile} showProfile={appConfig.isCommercial} />
 				) : (
 					<>
 						{tab === "home" && (
 							<Dashboard
+								profile={state.profile}
 								prediction={prediction}
 								status={status}
 								cycleDay={cycleDay}
@@ -529,6 +549,8 @@ function App() {
 						{tab === "settings" && (
 							<SettingsView
 								settings={state.settings}
+								profile={state.profile}
+								showProfile={appConfig.isCommercial}
 								notificationPermission={notificationPermission}
 								notificationBusy={notificationBusy}
 								notificationMessage={notificationMessage}
@@ -609,15 +631,44 @@ function App() {
 				<span>
 					Được tạo ra bằng tình yêu. <b aria-hidden="true">♥</b>
 				</span>
-				<a href="mailto:Nguyenquocvinh813@gmail.com">
-					© Nguyenquocvinh813@gmail.com
-				</a>
+				{appConfig.supportEmail && (
+					<a href={`mailto:${appConfig.supportEmail}`}>
+						© {appConfig.supportEmail}
+					</a>
+				)}
 			</footer>
 		</div>
 	);
 }
 
-function Onboarding({ onSave }) {
+function ProfileFields({ profile, onChange, idPrefix }) {
+	return (
+		<>
+			<div className="field">
+				<label htmlFor={`${idPrefix}-name`}>Tên của bạn (không bắt buộc)</label>
+				<input id={`${idPrefix}-name`} type="text" maxLength={80} value={profile.name} onChange={(event) => onChange({ ...profile, name: event.target.value })} placeholder="Bạn muốn được gọi là gì?" autoComplete="name" />
+			</div>
+			<div className="field">
+				<label htmlFor={`${idPrefix}-email`}>Email của bạn (không bắt buộc)</label>
+				<input id={`${idPrefix}-email`} type="email" maxLength={254} value={profile.email} onChange={(event) => onChange({ ...profile, email: event.target.value })} placeholder="ban@example.com" autoComplete="email" />
+				<small>Có thể bổ sung sau trong Cài đặt. Email chỉ nhận nhắc khi bạn bật tùy chọn gửi email.</small>
+			</div>
+		</>
+	);
+}
+
+function Onboarding({ onSave, profile, showProfile }) {
+	const [draft, setDraft] = useState(profile);
+	const [profileError, setProfileError] = useState("");
+	const save = (form) => {
+		const email = draft.email.trim();
+		if (showProfile && email && !validEmail(email)) {
+			setProfileError("Email không hợp lệ. Bạn có thể sửa hoặc để trống.");
+			return;
+		}
+		setProfileError("");
+		onSave({ ...form, profile: showProfile ? { name: draft.name.trim(), email } : null });
+	};
 	return (
 		<section className="onboarding page-enter" style={{ paddingBottom: 6 }}>
 			<div className="eyebrow">CHÀO MỪNG ĐẾN VỚI NGÀY ĐỎ</div>
@@ -636,9 +687,15 @@ function Onboarding({ onSave }) {
 				</div>
 				<h2>Bắt đầu theo dõi</h2>
 				<p>Nhập thông tin kỳ kinh gần nhất để xem những ngày sắp tới.</p>
+				{showProfile && (
+					<div className="profile-fields">
+						<ProfileFields profile={draft} onChange={setDraft} idPrefix="onboarding-profile" />
+						{profileError && <p className="form-error">{profileError}</p>}
+					</div>
+				)}
 				<PeriodForm
 					settings={{ cycleLength: 28, periodLength: 5 }}
-					onSave={onSave}
+					onSave={save}
 				/>
 			</div>
 			<Disclaimer />
@@ -647,6 +704,7 @@ function Onboarding({ onSave }) {
 }
 
 function Dashboard({
+	profile,
 	prediction,
 	status,
 	cycleDay,
@@ -667,7 +725,7 @@ function Dashboard({
 						{formatDate(todayKey(), { day: "numeric", month: "long" })}
 					</div>
 					<h1>
-						Xin chào, <em style={{ marginLeft: 8 }}> bé Nhii nhé.</em>
+						Xin chào{profile?.name ? <em style={{ marginLeft: 8 }}>{profile.name} nhé.</em> : <em style={{ marginLeft: 8 }}>{appConfig.greetingName ? `${appConfig.greetingName} nhé.` : "bạn nhé."}</em>}
 					</h1>
 				</div>
 				<span
@@ -985,25 +1043,27 @@ function HistoryView({ logs, onAdd, onEdit, onDelete }) {
 
 function SettingsView({
 	settings,
+	profile,
+	showProfile,
 	notificationPermission,
 	notificationBusy,
 	notificationMessage,
 	onEnableNotifications,
 	onTestNotification,
-	onTestEmail,
-	onSave,
+		onSave,
 	onReset,
 	onBack,
 }) {
 	const [form, setForm] = useState({
 		...settings,
+		profile: { name: profile?.name || "", email: profile?.email || "" },
 		reminders: {
 			periodEnabled: true,
 			waterEnabled: true,
 			leadDays: 3,
 			waterTimes: ["09:00", "13:00", "17:00"],
 			emailEnabled: false,
-			emailAddress: "yennhivo03022000@gmail.com",
+			emailAddress: profile?.email || "",
 			...(settings.reminders || {}),
 		},
 	});
@@ -1029,6 +1089,13 @@ function SettingsView({
 				</div>
 			</div>
 			<div className="settings-card">
+				{showProfile && (
+					<div className="profile-fields">
+						<h2>Thông tin của bạn</h2>
+						<ProfileFields profile={form.profile} onChange={(next) => setForm({ ...form, profile: next, profileError: "" })} idPrefix="settings-profile" />
+						{form.profileError && <p className="form-error">{form.profileError}</p>}
+					</div>
+				)}
 				<div className="field">
 					<label htmlFor="settings-cycle">
 						Mặc định độ dài chu kỳ cho kỳ mới
@@ -1076,9 +1143,9 @@ function SettingsView({
 							<button type="button" className="secondary-button compact" disabled={notificationBusy} onClick={onEnableNotifications}>
 								{notificationBusy ? "Đang xử lý..." : notificationPermission === "granted" ? "Đã cho phép thông báo" : "Cho phép thông báo"}
 							</button>
-							{/* <button type="button" className="secondary-button compact" disabled={notificationBusy} onClick={onTestNotification}>
+							<button type="button" className="secondary-button compact" disabled={notificationBusy} onClick={onTestNotification}>
 								Thử thông báo
-							</button> */}
+							</button>
 						</div>
 						<small>Trạng thái: {{ granted: "Đã cho phép", denied: "Bị chặn", default: "Chưa cấp quyền", unsupported: "Không hỗ trợ" }[notificationPermission] || notificationPermission}</small>
 						{notificationMessage && <output className="settings-help">{notificationMessage}</output>}
@@ -1109,19 +1176,22 @@ function SettingsView({
 							<span>Gửi email nhắc trước kỳ kinh</span>
 						</label>
 						<div className="field">
-							<label htmlFor="reminder-email">Email nhận nhắc nhở</label>
-							<input id="reminder-email" type="email" value={reminders.emailAddress} onChange={(e) => updateReminder("emailAddress", e.target.value)} placeholder="ban@example.com" autoComplete="email" />
-							<small>Email chỉ được gửi khi bạn bật tùy chọn này và ứng dụng đang hoạt động.</small>
-							{/* <button type="button" className="secondary-button compact" onClick={() => onTestEmail(reminders.emailAddress)}>
-								Gửi email thử
-							</button> */}
+							{!showProfile && <>
+								<label htmlFor="reminder-email">Email nhận nhắc nhở</label>
+								<input id="reminder-email" type="email" maxLength={254} value={form.profile.email} onChange={(e) => setForm({ ...form, profile: { ...form.profile, email: e.target.value } })} placeholder="ban@example.com" autoComplete="email" />
+							</>}
+							<small>{showProfile ? "Email nhận nhắc là email trong phần Thông tin của bạn. " : ""}Email chỉ được gửi khi bạn bật tùy chọn này và ứng dụng đang hoạt động.</small>
 						</div>
 					</div>
 				</div>
 				<button
 					type="button"
 					className="primary-button"
-					onClick={() =>
+					onClick={() => {
+						if (form.profile.email && !validEmail(form.profile.email.trim())) {
+							setForm({ ...form, profileError: "Email không hợp lệ." });
+							return;
+						}
 						onSave({
 							cycleLength: Number.isInteger(Number(form.cycleLength))
 								? Math.max(15, Math.min(60, Number(form.cycleLength)))
@@ -1137,8 +1207,8 @@ function SettingsView({
 								emailEnabled: Boolean(reminders.emailEnabled),
 								emailAddress: reminders.emailAddress,
 							},
-						})
-					}
+						}, form.profile)
+					}}
 				>
 					Lưu thay đổi
 				</button>

@@ -28,15 +28,40 @@ Thông báo cần được người dùng cho phép. Bản iPhone dùng `@capaci
 
 Bản web vẫn dùng Notification API trên `localhost`/HTTPS và hoạt động tốt nhất khi tab đang mở. EmailJS vẫn gửi từ client khi app đang mở, không được chuyển thành dịch vụ email chạy nền; email khi đóng app cần backend/scheduler.
 
-## Build iPhone
+## Build theo biến thể
 
-Dùng Node >=22.12 (khuyến nghị Node 22 LTS). Sau khi đổi code hoặc plugin:
+Ứng dụng dùng chung một `src`, nhưng có hai Vite mode:
 
 ```bash
-npm run build
-npx cap sync ios
+npm run dev:personal
+npm run dev:commercial
+npm run build:personal
+npm run build:commercial
+```
+
+`personal` giữ dữ liệu và branding cá nhân hiện tại. `commercial` dùng storage key riêng, không có tên/email cá nhân mặc định; ở màn hình đầu người dùng có thể nhập tên và email hoặc bỏ trống, rồi chỉnh sửa tại Cài đặt. Email hồ sơ là email nhận nhắc EmailJS.
+
+Các file `.env.personal` và `.env.commercial` chỉ chứa cấu hình client-visible. Không đưa secret backend vào biến `VITE_*`; các file `.env.*.local` dùng cho override máy cá nhân và bị bỏ qua bởi Git.
+
+Nếu hai app iOS cần cài song song, commercial phải dùng Bundle ID khác và signing/provisioning riêng. Nếu commercial là bản cập nhật của app đã phát hành, giữ nguyên Bundle ID personal.
+
+## Build iPhone
+
+Dùng Node >=22.12 (khuyến nghị Node 22 LTS). Chọn đúng biến thể trước khi đồng bộ Capacitor:
+
+```bash
+# Bản cá nhân
+npm run build:personal
+npm run sync:personal
+
+# Bản thương mại
+npm run build:commercial
+npm run sync:commercial
+
 npx cap open ios
 ```
+
+Mỗi lệnh `sync:*` kiểm tra web marker và Bundle ID native trước khi chạy `npx cap sync ios`. Nếu hai app iOS cài song song, commercial dùng Bundle ID `com.vinhnguyen.dayred.commercial`; cần signing/provisioning riêng trong Xcode.
 
 Trong Xcode giữ nguyên Team/Bundle ID và Run lại trên từng iPhone để cập nhật. Không cần xóa app (xóa app có thể mất dữ liệu local). Trong app: Cài đặt → Cho phép thông báo → Thử thông báo, rồi khóa màn hình; thông báo thử được đặt sau 5 giây. Nếu bị từ chối, bật lại trong Cài đặt iPhone → Thông báo → Day Red.
 

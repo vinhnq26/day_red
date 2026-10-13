@@ -303,7 +303,9 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 566N5W963R;
 				INFOPLIST_FILE = App/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "Day red";
+				APP_DISPLAY_NAME = "Day Red";
+				APP_VARIANT = personal;
+				INFOPLIST_KEY_CFBundleDisplayName = "Day Red";
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -327,7 +329,9 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 566N5W963R;
 				INFOPLIST_FILE = App/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "Day red";
+				APP_DISPLAY_NAME = "Day Red";
+				APP_VARIANT = personal;
+				INFOPLIST_KEY_CFBundleDisplayName = "Day Red";
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

@@ -1,7 +1,9 @@
 import { addDays, parseDateKey } from './dateUtils.js'
+import { appConfig } from '../config/appConfig.js'
 
-const STORAGE_KEY = 'day-red-state-v1'
-const STORAGE_VERSION = 5
+const LEGACY_STORAGE_KEY = 'day-red-state-v1'
+const STORAGE_KEY = appConfig.isCommercial ? 'day-red-state-commercial-v1' : LEGACY_STORAGE_KEY
+const STORAGE_VERSION = 6
 const MAX_LOGS = 1000
 const MAX_REMINDER_HISTORY = 500
 const MAX_NATIVE_SCHEDULE = 126
@@ -12,9 +14,13 @@ const MAX_CYCLE_LENGTH = 60
 const MIN_PERIOD_LENGTH = 1
 const MAX_PERIOD_LENGTH = 15
 const DEFAULT_WATER_TIMES = Object.freeze(['09:00', '13:00', '17:00'])
-const DEFAULT_EMAIL_ADDRESS = 'yennhivo03022000@gmail.com'
+const DEFAULT_PROFILE = Object.freeze({
+  name: appConfig.greetingName,
+  email: appConfig.defaultProfileEmail,
+})
 
 export const defaultState = Object.freeze({
+  profile: DEFAULT_PROFILE,
   settings: Object.freeze({
     cycleLength: 28,
     periodLength: 5,
@@ -24,7 +30,7 @@ export const defaultState = Object.freeze({
       leadDays: 3,
       waterTimes: DEFAULT_WATER_TIMES,
       emailEnabled: false,
-      emailAddress: DEFAULT_EMAIL_ADDRESS,
+      emailAddress: DEFAULT_PROFILE.email,
     }),
   }),
   periodLogs: Object.freeze([]),
@@ -37,6 +43,7 @@ let storageStatus = { available: true, unavailable: false, warning: null, versio
 
 function cloneDefaultState() {
   return {
+    profile: { ...defaultState.profile },
     settings: {
       ...defaultState.settings,
       reminders: { ...defaultState.settings.reminders, waterTimes: [...DEFAULT_WATER_TIMES] },
@@ -118,6 +125,18 @@ function sanitizeDailyLog(log) {
   }
 }
 
+function sanitizeProfile(value, legacyEmail = '') {
+  const source = value && typeof value === 'object' ? value : {}
+  const name = typeof source.name === 'string' ? source.name.trim().slice(0, 80) : ''
+  const rawEmail = typeof source.email === 'string' ? source.email.trim() : ''
+  const fallback = typeof legacyEmail === 'string' ? legacyEmail.trim() : ''
+  const email = rawEmail || (fallback && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fallback) ? fallback.slice(0, 254) : '')
+  return {
+    name,
+    email: email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email.slice(0, 254) : '',
+  }
+}
+
 export function sanitizeReminders(value) {
   const source = value && typeof value === 'object' ? value : {}
   const validTimes = Array.isArray(source.waterTimes)
@@ -130,9 +149,11 @@ export function sanitizeReminders(value) {
     leadDays: boundedInteger(source.leadDays, 1, 7) || 3,
     waterTimes: validTimes ? [...source.waterTimes].sort() : [...DEFAULT_WATER_TIMES],
     emailEnabled: typeof source.emailEnabled === 'boolean' ? source.emailEnabled : false,
-    emailAddress: typeof source.emailAddress === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(source.emailAddress.trim())
-      ? source.emailAddress.trim().slice(0, 254)
-      : DEFAULT_EMAIL_ADDRESS,
+    emailAddress: typeof source.emailAddress === 'string' && source.emailAddress.trim() === ''
+      ? ''
+      : typeof source.emailAddress === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(source.emailAddress.trim())
+        ? source.emailAddress.trim().slice(0, 254)
+        : appConfig.defaultProfileEmail,
   }
 }
 
@@ -167,15 +188,27 @@ function sanitizeState(value) {
   const source = value && typeof value === 'object' ? value : {}
   const cycleLength = boundedInteger(source.settings?.cycleLength, MIN_CYCLE_LENGTH, MAX_CYCLE_LENGTH) || defaultState.settings.cycleLength
   const periodLength = boundedInteger(source.settings?.periodLength, MIN_PERIOD_LENGTH, MAX_PERIOD_LENGTH) || defaultState.settings.periodLength
+  const legacyEmail = source.settings?.reminders?.emailAddress
+  const profileFallback = typeof legacyEmail === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(legacyEmail.trim())
+    ? legacyEmail
+    : appConfig.defaultProfileEmail
+  const hasProfile = source.profile && typeof source.profile === 'object'
+  const profileFallbackForMissingField = hasProfile && !Object.prototype.hasOwnProperty.call(source.profile, 'email') ? profileFallback : ''
+  const profile = sanitizeProfile(hasProfile ? source.profile : undefined, hasProfile ? profileFallbackForMissingField : profileFallback)
+  const reminders = sanitizeReminders({
+    ...source.settings?.reminders,
+    emailAddress: profile.email,
+  })
   const periodLogs = Array.isArray(source.periodLogs)
     ? source.periodLogs.map((log, index) => sanitizePeriodLog(log, cycleLength, periodLength, index)).filter(Boolean).slice(0, MAX_LOGS)
     : []
   const dailyLogs = Array.isArray(source.dailyLogs) ? source.dailyLogs.map(sanitizeDailyLog).filter(Boolean).slice(0, MAX_LOGS) : []
   return {
+    profile,
     settings: {
       cycleLength,
       periodLength,
-      reminders: sanitizeReminders(source.settings?.reminders),
+      reminders,
     },
     periodLogs,
     dailyLogs,

@@ -4,10 +4,16 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
+    "dev": "vite --mode personal",
+    "dev:personal": "vite --mode personal",
+    "dev:commercial": "vite --mode commercial",
+    "build": "vite build --mode personal",
+    "build:personal": "vite build --mode personal",
+    "build:commercial": "vite build --mode commercial",
+    "sync:personal": "node scripts/sync-ios-variant.js personal",
+    "sync:commercial": "node scripts/sync-ios-variant.js commercial",
     "preview": "vite preview",
-    "test:unit": "node --test src/utils/*.test.js",
+    "test:unit": "node --test src/config/*.test.js src/utils/*.test.js",
     "test:e2e": "playwright test"
   },
   "dependencies": {

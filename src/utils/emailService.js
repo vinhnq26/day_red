@@ -1,14 +1,13 @@
 const EMAILJS_CDN = 'https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js'
-const DEFAULT_SERVICE_ID = 'service_0id1myu'
-const DEFAULT_TEMPLATE_ID = 'template_rq0w2am'
-const DEFAULT_PUBLIC_KEY = 'P_OGJ56eorjovyNbb'
+import { appConfig } from '../config/appConfig.js'
 let sdkPromise
 
-function getConfig() {
+function getConfig(config = appConfig) {
   return {
-    serviceId: import.meta.env?.VITE_EMAILJS_SERVICE_ID || DEFAULT_SERVICE_ID,
-    templateId: import.meta.env?.VITE_EMAILJS_TEMPLATE_ID || DEFAULT_TEMPLATE_ID,
-    publicKey: import.meta.env?.VITE_EMAILJS_PUBLIC_KEY || DEFAULT_PUBLIC_KEY,
+    serviceId: config.emailServiceId,
+    templateId: config.emailTemplateId,
+    publicKey: config.emailPublicKey,
+    appName: config.appName,
   }
 }
 
@@ -31,9 +30,9 @@ function loadSdk() {
   return sdkPromise
 }
 
-export async function sendReminderEmail({ toEmail, reminderType, message, reminderDate }) {
+export async function sendReminderEmail({ toEmail, reminderType, message, reminderDate, config: suppliedConfig }) {
   if (!validEmail(toEmail)) return { ok: false, error: 'Email nhận không hợp lệ.' }
-  const config = getConfig()
+  const config = getConfig(suppliedConfig)
   try {
     const emailjs = await loadSdk()
     emailjs.init({ publicKey: config.publicKey })
@@ -42,7 +41,7 @@ export async function sendReminderEmail({ toEmail, reminderType, message, remind
       reminder_type: reminderType,
       message,
       reminder_date: reminderDate,
-      app_name: 'Ngày Đỏ',
+      app_name: config.appName,
     })
     return { ok: true }
   } catch {
