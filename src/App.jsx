@@ -27,10 +27,17 @@ import {
 import { getReminderCandidates } from "./utils/reminders";
 import { sendReminderEmail } from "./utils/emailService";
 import {
+	checkNotificationPermission,
+	createBoundedNativeNotificationPlugin,
+	getNativeNotificationPlugin,
 	getNotificationPermission,
+	isNativeNotificationPlatform,
 	requestNotificationPermission,
 	showBrowserNotification,
+	showTestNotification,
+	withNativeNotificationTimeout,
 } from "./utils/notifications";
+import { buildNativeReminderPlan, createNativeReminderReconciler } from "./utils/nativeReminderSchedule";
 
 const symptoms = [
 	["cramps", "Đau bụng"],
@@ -55,7 +62,91 @@ function App() {
 	const [editingLog, setEditingLog] = useState(null);
 	const [toast, setToast] = useState("");
 	const [notificationPermission, setNotificationPermission] = useState(getNotificationPermission);
+	const [notificationBusy, setNotificationBusy] = useState(false);
+	const [notificationMessage, setNotificationMessage] = useState("");
 	const reminderInFlight = useRef(false);
+	const notificationActionInFlight = useRef(false);
+	const notificationActionVersion = useRef(0);
+	const nativePlatform = isNativeNotificationPlatform();
+	const nativeQueue = useRef(Promise.resolve());
+	const nativeReconciler = useRef(null);
+	const currentState = useRef(state);
+	currentState.current = state;
+	const nativeSchedule = useRef(state.nativeNotificationSchedule || []);
+
+	const syncNativeReminders = () => {
+		if (!nativePlatform) return Promise.resolve();
+		const run = nativeQueue.current.then(async () => {
+			const permission = await checkNotificationPermission();
+			setNotificationPermission(permission);
+			if (!nativeReconciler.current) {
+				nativeReconciler.current = createNativeReminderReconciler(createBoundedNativeNotificationPlugin((await getNativeNotificationPlugin()).plugin));
+			}
+			const snapshot = currentState.current;
+			const plan = permission === "granted" ? buildNativeReminderPlan({
+				latest: getLatestLog(snapshot.periodLogs),
+				cycleLength: snapshot.settings.cycleLength,
+				periodLength: snapshot.settings.periodLength,
+				preferences: snapshot.settings.reminders,
+				history: snapshot.reminderHistory,
+				previous: nativeSchedule.current,
+			}) : [];
+			const metadata = await nativeReconciler.current(plan, nativeSchedule.current);
+			nativeSchedule.current = metadata;
+			setState((current) => JSON.stringify(current.nativeNotificationSchedule) === JSON.stringify(metadata)
+				? current : { ...current, nativeNotificationSchedule: metadata });
+		});
+		nativeQueue.current = run.catch(() => {});
+		return run;
+	};
+
+	useEffect(() => {
+		if (!nativePlatform) return;
+		let disposed = false;
+		const handles = [];
+		const recordDelivery = (notification) => {
+			const key = notification?.extra?.key;
+			if (disposed || notification?.extra?.owner !== "day-red" || typeof key !== "string") return;
+			setState((current) => ({
+				...current,
+				reminderHistory: [...new Set([...(current.reminderHistory || []), key])].slice(-500),
+			}));
+		};
+		getNativeNotificationPlugin().then(async ({ plugin }) => {
+			for (const [event, listener] of [
+				["localNotificationReceived", recordDelivery],
+				["localNotificationActionPerformed", (action) => recordDelivery(action.notification)],
+			]) {
+				await withNativeNotificationTimeout(async () => {
+					const handle = await plugin.addListener(event, listener);
+					if (disposed) await handle.remove();
+					else handles.push(handle);
+				}, `đăng ký ${event}`);
+			}
+		}).catch((error) => setNotificationMessage(error.message));
+		return () => {
+			disposed = true;
+			handles.forEach((handle) => { handle.remove().catch(() => {}); });
+		};
+	}, [nativePlatform]);
+
+	useEffect(() => {
+		if (!nativePlatform) return;
+		const reconcile = () => {
+			if (document.visibilityState === "hidden") return;
+			setToday(todayKey());
+			syncNativeReminders().catch((error) => setToast(`Không thể cập nhật lịch nhắc: ${error.message}`));
+		};
+		reconcile();
+		window.addEventListener("focus", reconcile);
+		document.addEventListener("visibilitychange", reconcile);
+		const timer = setInterval(reconcile, 60_000);
+		return () => {
+			window.removeEventListener("focus", reconcile);
+			document.removeEventListener("visibilitychange", reconcile);
+			clearInterval(timer);
+		};
+	}, [nativePlatform, state.settings, state.periodLogs, state.reminderHistory]);
 
 	useEffect(() => {
 		saveState(state);
@@ -163,32 +254,37 @@ function App() {
 		});
 		if (!candidates.length) return;
 		reminderInFlight.current = true;
-		const delivered = notificationPermission === "granted"
-			? candidates
-				.filter((candidate) => showBrowserNotification({ ...candidate, tag: candidate.key }))
-				.map((candidate) => candidate.key)
-			: [];
-		const emailCandidate = candidates.find((candidate) => candidate.type === "period"
-			&& candidate.daysUntil === reminderPreferences.leadDays
-			&& reminderPreferences.emailEnabled
-			&& reminderPreferences.emailAddress
-			&& !(state.reminderHistory || []).includes(`email:period:${candidate.reminderDate}`));
-		if (emailCandidate) {
-			const result = await sendReminderEmail({
-				toEmail: reminderPreferences.emailAddress,
-				reminderType: "Kỳ kinh sắp tới",
-				message: emailCandidate.body,
-				reminderDate: formatDate(emailCandidate.reminderDate),
-			});
-			if (result.ok) delivered.push(`email:period:${emailCandidate.reminderDate}`);
+		try {
+			const delivered = !nativePlatform && notificationPermission === "granted"
+				? candidates
+					.filter((candidate) => showBrowserNotification({ ...candidate, tag: candidate.key }))
+					.map((candidate) => candidate.key)
+				: [];
+			const emailCandidate = candidates.find((candidate) => candidate.type === "period"
+				&& candidate.daysUntil === reminderPreferences.leadDays
+				&& reminderPreferences.emailEnabled
+				&& reminderPreferences.emailAddress
+				&& !(state.reminderHistory || []).includes(`email:period:${candidate.reminderDate}`));
+			if (emailCandidate) {
+				const result = await sendReminderEmail({
+					toEmail: reminderPreferences.emailAddress,
+					reminderType: "Kỳ kinh sắp tới",
+					message: emailCandidate.body,
+					reminderDate: formatDate(emailCandidate.reminderDate),
+				});
+				if (result.ok) delivered.push(`email:period:${emailCandidate.reminderDate}`);
+			}
+			if (delivered.length) {
+				setState((current) => ({
+					...current,
+					reminderHistory: [...new Set([...(current.reminderHistory || []), ...delivered])].slice(-500),
+				}));
+			}
+		} catch (error) {
+			setToast(`Không thể gửi nhắc nhở: ${error.message}`);
+		} finally {
+			reminderInFlight.current = false;
 		}
-		if (delivered.length) {
-			setState((current) => ({
-				...current,
-				reminderHistory: [...new Set([...(current.reminderHistory || []), ...delivered])].slice(-500),
-			}));
-		}
-		reminderInFlight.current = false;
 	};
 	useEffect(() => {
 		reconcileReminders();
@@ -272,13 +368,26 @@ function App() {
 		}));
 		setToast("Đã xóa bản ghi");
 	};
-	const resetAll = () => {
+	const resetAll = async () => {
 		if (!window.confirm("Xóa toàn bộ dữ liệu theo dõi trên thiết bị này?"))
 			return;
-		clearState();
-		setState(defaultState);
-		setTab("home");
-		setToast("Đã xóa dữ liệu");
+		try {
+			if (nativePlatform) {
+				await nativeQueue.current;
+				if (!nativeReconciler.current) {
+					nativeReconciler.current = createNativeReminderReconciler(createBoundedNativeNotificationPlugin((await getNativeNotificationPlugin()).plugin));
+				}
+				await nativeReconciler.current([], []);
+				nativeSchedule.current = [];
+			}
+			clearState();
+			currentState.current = defaultState;
+			setState(defaultState);
+			setTab("home");
+			setToast("Đã xóa dữ liệu và lịch nhắc");
+		} catch (error) {
+			setToast(`Chưa xóa dữ liệu vì không thể hủy lịch nhắc: ${error.message}`);
+		}
 	};
 
 	const openPeriodForm = (log = null, startDate = null) => {
@@ -292,29 +401,57 @@ function App() {
 		setShowLogForm(true);
 	};
 	const enableNotifications = async () => {
-		const permission = await requestNotificationPermission();
-		setNotificationPermission(permission);
-		setToast(
-			permission === "granted"
-				? "Đã bật thông báo nhắc nhở"
+		if (notificationActionInFlight.current) return;
+		notificationActionInFlight.current = true;
+		const actionVersion = ++notificationActionVersion.current;
+		setNotificationBusy(true);
+		setNotificationMessage("Đang xin quyền thông báo...");
+		try {
+			const permission = await requestNotificationPermission();
+			setNotificationPermission(permission);
+			if (permission === "granted" && nativePlatform) {
+				setNotificationMessage("Đã cấp quyền. Đang cập nhật lịch nhắc...");
+				syncNativeReminders().then(() => {
+					if (notificationActionVersion.current === actionVersion) setNotificationMessage("Đã cho phép thông báo và cập nhật lịch nhắc");
+				}).catch((error) => {
+					if (notificationActionVersion.current === actionVersion) setNotificationMessage(`Đã cấp quyền nhưng chưa cập nhật được lịch: ${error.message}`);
+				});
+				return;
+			}
+			setNotificationMessage(permission === "granted"
+				? "Đã cho phép thông báo và cập nhật lịch nhắc"
 				: permission === "denied"
-					? "Trình duyệt đã chặn thông báo. Bạn có thể bật lại trong cài đặt trình duyệt."
-					: "Thiết bị này chưa hỗ trợ thông báo trình duyệt.",
-		);
+					? nativePlatform
+						? "Hãy bật thông báo cho Day Red trong Cài đặt iPhone → Thông báo."
+						: "Hãy bật lại thông báo trong cài đặt trình duyệt."
+					: "Thiết bị chưa cho phép hoặc chưa hỗ trợ thông báo.");
+		} catch (error) {
+			setNotificationMessage(`Không thể bật thông báo: ${error.message}`);
+		} finally {
+			notificationActionInFlight.current = false;
+			setNotificationBusy(false);
+		}
 	};
-	const testNotification = () => {
-		const shown = showBrowserNotification({
-			title: "Thông báo thử",
-			body: "Thông báo trên thiết bị đang hoạt động.",
-			tag: "day-red:test",
-		});
-		setToast(
-			shown
-				? "Đã gửi thông báo thử"
-				: notificationPermission === "denied"
-					? "Thông báo đang bị chặn trong cài đặt trình duyệt."
-					: "Hãy cho phép thông báo trước khi thử.",
-		);
+	const testNotification = async () => {
+		if (notificationActionInFlight.current) return;
+		notificationActionInFlight.current = true;
+		++notificationActionVersion.current;
+		setNotificationBusy(true);
+		setNotificationMessage("Đang xin quyền để thử thông báo...");
+		try {
+			const permission = await requestNotificationPermission();
+			setNotificationPermission(permission);
+			if (permission === "granted") setNotificationMessage("Đang đặt lịch thông báo thử...");
+			const shown = permission === "granted" && await showTestNotification();
+			setNotificationMessage(shown
+				? nativePlatform ? "Đã đặt lịch thử sau 5 giây. Hãy khóa màn hình để kiểm tra." : "Đã gửi thông báo thử"
+				: nativePlatform ? "Hãy bật thông báo trong Cài đặt iPhone → Thông báo → Day Red." : "Trình duyệt chưa cho phép hoặc không hỗ trợ thông báo.");
+		} catch (error) {
+			setNotificationMessage(`Không thể đặt lịch thử: ${error.message}`);
+		} finally {
+			notificationActionInFlight.current = false;
+			setNotificationBusy(false);
+		}
 	};
 	const testEmailReminder = async (recipient) => {
 		const emailAddress = recipient || state.settings.reminders?.emailAddress;
@@ -333,7 +470,7 @@ function App() {
 	};
 
 	return (
-		<div className="app-shell">
+		<div className={`app-shell${nativePlatform ? " native-app" : ""}`}>
 			<header className="topbar">
 				<div className="brand">
 					<span className="brand-mark">♥</span>
@@ -393,6 +530,8 @@ function App() {
 							<SettingsView
 								settings={state.settings}
 								notificationPermission={notificationPermission}
+								notificationBusy={notificationBusy}
+								notificationMessage={notificationMessage}
 									onEnableNotifications={enableNotifications}
 									onTestNotification={testNotification}
 									onTestEmail={testEmailReminder}
@@ -462,9 +601,9 @@ function App() {
 				</Modal>
 			)}
 			{toast && (
-				<div className="toast" role="status">
+				<output className="toast">
 					{toast}
-				</div>
+				</output>
 			)}
 			<footer className="site-footer">
 				<span>
@@ -847,6 +986,8 @@ function HistoryView({ logs, onAdd, onEdit, onDelete }) {
 function SettingsView({
 	settings,
 	notificationPermission,
+	notificationBusy,
+	notificationMessage,
 	onEnableNotifications,
 	onTestNotification,
 	onTestEmail,
@@ -928,18 +1069,19 @@ function SettingsView({
 				<div className="reminder-settings">
 					<div className="field">
 						<span className="field-label">Nhắc nhở trên thiết bị</span>
-						<p className="settings-help">Thông báo hoạt động tốt nhất khi bạn đang mở ứng dụng.</p>
+						<p className="settings-help">{isNativeNotificationPlatform()
+								? "iPhone nhận lịch nhắc kể cả khi app không mở. Nhắc kỳ lúc 09:00; mở app để cập nhật dự đoán."
+								: "Thông báo trình duyệt hoạt động tốt nhất khi bạn đang mở ứng dụng."}</p>
 						<div className="notification-actions">
-							<button type="button" className="secondary-button compact" onClick={onEnableNotifications}>
-								{notificationPermission === "granted" ? "Đã cho phép thông báo" : "Cho phép thông báo"}
+							<button type="button" className="secondary-button compact" disabled={notificationBusy} onClick={onEnableNotifications}>
+								{notificationBusy ? "Đang xử lý..." : notificationPermission === "granted" ? "Đã cho phép thông báo" : "Cho phép thông báo"}
 							</button>
-							{/* {notificationPermission === "granted" && (
-								<button type="button" className="secondary-button compact" onClick={onTestNotification}>
-									Thử thông báo
-								</button>
-							)} */}
+							{/* <button type="button" className="secondary-button compact" disabled={notificationBusy} onClick={onTestNotification}>
+								Thử thông báo
+							</button> */}
 						</div>
-						<small>Trạng thái: {notificationPermission}</small>
+						<small>Trạng thái: {{ granted: "Đã cho phép", denied: "Bị chặn", default: "Chưa cấp quyền", unsupported: "Không hỗ trợ" }[notificationPermission] || notificationPermission}</small>
+						{notificationMessage && <output className="settings-help">{notificationMessage}</output>}
 					</div>
 					<label className="setting-toggle">
 						<input type="checkbox" checked={reminders.periodEnabled} onChange={(e) => updateReminder("periodEnabled", e.target.checked)} />

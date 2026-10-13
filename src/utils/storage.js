@@ -1,9 +1,12 @@
 import { addDays, parseDateKey } from './dateUtils.js'
 
 const STORAGE_KEY = 'day-red-state-v1'
-const STORAGE_VERSION = 4
+const STORAGE_VERSION = 5
 const MAX_LOGS = 1000
 const MAX_REMINDER_HISTORY = 500
+const MAX_NATIVE_SCHEDULE = 126
+const NATIVE_NOTIFICATION_MIN_ID = 100000
+const NATIVE_NOTIFICATION_MAX_ID = 2147483000
 const MIN_CYCLE_LENGTH = 15
 const MAX_CYCLE_LENGTH = 60
 const MIN_PERIOD_LENGTH = 1
@@ -27,6 +30,7 @@ export const defaultState = Object.freeze({
   periodLogs: Object.freeze([]),
   dailyLogs: Object.freeze([]),
   reminderHistory: Object.freeze([]),
+  nativeNotificationSchedule: Object.freeze([]),
 })
 
 let storageStatus = { available: true, unavailable: false, warning: null, version: STORAGE_VERSION }
@@ -40,6 +44,7 @@ function cloneDefaultState() {
     periodLogs: [],
     dailyLogs: [],
     reminderHistory: [],
+    nativeNotificationSchedule: [],
   }
 }
 
@@ -141,6 +146,23 @@ function sanitizeReminderHistory(value) {
   return [...new Set(valid)].slice(-MAX_REMINDER_HISTORY)
 }
 
+function sanitizeNativeNotificationSchedule(value) {
+  if (!Array.isArray(value)) return []
+  const usedKeys = new Set()
+  const usedIds = new Set()
+  return value.filter((entry) => {
+    if (!entry || typeof entry !== 'object' || typeof entry.key !== 'string') return false
+    const match = entry.key.match(/^(?:period|water):(\d{4}-\d{2}-\d{2})/)
+    const keyValid = /^(?:period:\d{4}-\d{2}-\d{2}|water:\d{4}-\d{2}-\d{2}:(?:[01]\d|2[0-3]):[0-5]\d)$/.test(entry.key)
+    const id = boundedInteger(entry.id, NATIVE_NOTIFICATION_MIN_ID, NATIVE_NOTIFICATION_MAX_ID)
+    const at = typeof entry.at === 'string' && !Number.isNaN(new Date(entry.at).getTime())
+    if (!keyValid || !match || !validDate(match[1]) || id === null || !at || usedKeys.has(entry.key) || usedIds.has(id)) return false
+    usedKeys.add(entry.key)
+    usedIds.add(id)
+    return true
+  }).slice(0, MAX_NATIVE_SCHEDULE)
+}
+
 function sanitizeState(value) {
   const source = value && typeof value === 'object' ? value : {}
   const cycleLength = boundedInteger(source.settings?.cycleLength, MIN_CYCLE_LENGTH, MAX_CYCLE_LENGTH) || defaultState.settings.cycleLength
@@ -158,6 +180,7 @@ function sanitizeState(value) {
     periodLogs,
     dailyLogs,
     reminderHistory: sanitizeReminderHistory(source.reminderHistory),
+    nativeNotificationSchedule: sanitizeNativeNotificationSchedule(source.nativeNotificationSchedule),
   }
 }
 

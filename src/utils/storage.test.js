@@ -75,6 +75,29 @@ test('invalid email settings fall back to the configured recipient', () => {
   assert.equal(state.settings.reminders.emailAddress, 'yennhivo03022000@gmail.com')
 })
 
+test('v4 data migrates without losing logs or reminder history', () => {
+  installStorage(JSON.stringify({ version: 4, state: {
+    periodLogs: [{ id: 'saved', startDate: '2024-01-01', endDate: '2024-01-05', periodLength: 5, cycleLength: 28 }],
+    reminderHistory: ['period:2024-01-29'],
+  } }))
+  const state = loadState()
+  assert.equal(STORAGE_VERSION, 5)
+  assert.equal(state.periodLogs[0].id, 'saved')
+  assert.deepEqual(state.reminderHistory, ['period:2024-01-29'])
+  assert.deepEqual(state.nativeNotificationSchedule, [])
+})
+
+test('native schedule metadata round trips and filters invalid or duplicate entries', () => {
+  installStorage()
+  const state = loadState()
+  const entry = { key: 'period:2024-01-29', id: 100001, at: '2024-01-26T02:00:00.000Z', title: 'Nhắc', body: 'Kỳ tiếp theo' }
+  assert.equal(saveState({ ...state, nativeNotificationSchedule: [entry, entry, { ...entry, id: 1 }, { ...entry, key: 'water:2024-01-29:29:00', id: 100002 }, { ...entry, key: 'period:2024-02-01', id: 100003, at: 'bad' }] }), true)
+  assert.deepEqual(loadState().nativeNotificationSchedule, [entry])
+  assert.deepEqual(loadState().reminderHistory, [])
+  clearState()
+  assert.deepEqual(loadState().nativeNotificationSchedule, [])
+})
+
 test('storage failures do not crash and expose unavailable warning', () => {
   installStorage(null, true)
   const warnings = []

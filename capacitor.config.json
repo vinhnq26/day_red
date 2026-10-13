@@ -1,0 +1,10 @@
+{
+  "appId": "com.vinhnguyen.dayred",
+  "appName": "Day Red",
+  "webDir": "dist",
+  "plugins": {
+    "LocalNotifications": {
+      "presentationOptions": ["banner", "list", "sound"]
+    }
+  }
+}

@@ -14,6 +14,108 @@ test.beforeEach(async ({ page }) => {
   await page.reload()
 })
 
+test('mobile layout has 32px top clearance without changing desktop spacing', async ({ page }) => {
+  await expect(page.locator('.app-shell')).toHaveCSS('padding-top', '32px')
+  const header = await page.locator('.topbar').boundingBox()
+  expect(header.y).toBeGreaterThanOrEqual(32)
+  await page.setViewportSize({ width: 1280, height: 900 })
+  await expect(page.locator('.app-shell')).toHaveCSS('padding-top', '0px')
+})
+
+test('notification buttons show feedback and reminders default to enabled', async ({ page }) => {
+  await page.addInitScript(() => {
+    class NotificationMock {
+      static permission = 'default'
+      static async requestPermission() { NotificationMock.permission = 'granted'; return 'granted' }
+      constructor(title) { window.notificationTitles = [...(window.notificationTitles || []), title] }
+    }
+    Object.defineProperty(window, 'Notification', { value: NotificationMock, configurable: true })
+  })
+  await page.reload()
+  await page.locator('#period-date').fill(dateKey(-1))
+  await page.getByRole('button', { name: /Lưu ngày bắt đầu thực tế/ }).click()
+  await page.getByRole('button', { name: 'Mở cài đặt' }).click()
+  await expect(page.getByLabel('Nhắc gần tới kỳ kinh', { exact: true })).toBeChecked()
+  await expect(page.getByLabel('Nhắc uống đủ nước trong kỳ', { exact: true })).toBeChecked()
+  await page.getByRole('button', { name: 'Cho phép thông báo', exact: true }).click()
+  await expect(page.getByText('Đã cho phép thông báo và cập nhật lịch nhắc', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Thử thông báo', exact: true }).click()
+  await expect(page.getByText('Đã gửi thông báo thử', { exact: true })).toBeVisible()
+  expect(await page.evaluate(() => window.notificationTitles)).toContain('Thông báo thử')
+})
+
+async function mockNativeNotifications(page, behavior = 'normal') {
+  await page.addInitScript((behavior) => {
+    window.webkit = { messageHandlers: { bridge: {} } }
+    window.nativeNotificationCalls = []
+    window.nativeNotificationPayloads = []
+    let permission = 'prompt'
+    window.Capacitor = {
+      PluginHeaders: [{
+        name: 'LocalNotifications',
+        methods: ['checkPermissions', 'requestPermissions', 'getPending', 'cancel', 'schedule']
+          .map((name) => ({ name, rtype: 'promise' }))
+          .concat([{ name: 'addListener', rtype: 'callback' }, { name: 'removeListener', rtype: 'promise' }]),
+      }],
+      nativeCallback: () => 'listener-id',
+      nativePromise: async (plugin, method, options) => {
+        window.nativeNotificationCalls.push(method)
+        if (behavior === 'permission-hang' && method === 'requestPermissions') return new Promise(() => {})
+        if (behavior === 'pending-hang' && method === 'getPending') return new Promise(() => {})
+        if (method === 'requestPermissions') { permission = 'granted'; return { display: permission } }
+        if (method === 'checkPermissions') return { display: permission }
+        if (method === 'getPending') return { notifications: [] }
+        if (method === 'schedule') window.nativeNotificationPayloads.push(options)
+        return {}
+      },
+    }
+  }, behavior)
+  await page.reload()
+  await page.getByRole('button', { name: 'Mở cài đặt' }).click()
+}
+
+test('native permission and test buttons work through the real Capacitor proxy', async ({ page }) => {
+  await mockNativeNotifications(page)
+  await page.getByRole('button', { name: 'Cho phép thông báo', exact: true }).click()
+  await expect(page.getByText('Đã cho phép thông báo và cập nhật lịch nhắc', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Thử thông báo', exact: true }).click()
+  await expect(page.getByText('Đã đặt lịch thử sau 5 giây. Hãy khóa màn hình để kiểm tra.', { exact: true })).toBeVisible()
+  const calls = await page.evaluate(() => window.nativeNotificationCalls)
+  expect(calls).toContain('requestPermissions')
+  expect(calls).toContain('schedule')
+  expect(calls).not.toContain('then')
+  const payload = await page.evaluate(() => window.nativeNotificationPayloads.at(-1))
+  expect(payload.notifications[0].id).toBe(2147483640)
+})
+
+test('a stuck native permission request recovers the buttons without repeating the request', async ({ page }) => {
+  await mockNativeNotifications(page, 'permission-hang')
+  await page.clock.install()
+  await page.getByRole('button', { name: 'Cho phép thông báo', exact: true }).click()
+  await expect.poll(() => page.evaluate(() => window.nativeNotificationCalls.includes('requestPermissions'))).toBe(true)
+  await page.clock.fastForward(61_000)
+  await expect(page.getByText(/Không thể bật thông báo: iPhone chưa trả kết quả/)).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Cho phép thông báo', exact: true })).toBeEnabled()
+  await page.getByRole('button', { name: 'Thử thông báo', exact: true }).click()
+  await expect(page.getByText('Đang xin quyền để thử thông báo...', { exact: true })).toBeVisible()
+  expect(await page.evaluate(() => window.nativeNotificationCalls.filter((method) => method === 'requestPermissions').length)).toBe(1)
+  await page.clock.fastForward(61_000)
+  await expect(page.getByRole('button', { name: 'Thử thông báo', exact: true })).toBeEnabled()
+})
+
+test('stuck startup reconciliation does not block native test or overwrite its result', async ({ page }) => {
+  await mockNativeNotifications(page, 'pending-hang')
+  await page.clock.install()
+  await expect.poll(() => page.evaluate(() => window.nativeNotificationCalls.includes('getPending'))).toBe(true)
+  await page.getByRole('button', { name: 'Cho phép thông báo', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Thử thông báo', exact: true })).toBeEnabled()
+  await page.getByRole('button', { name: 'Thử thông báo', exact: true }).click()
+  await expect(page.getByText('Đã đặt lịch thử sau 5 giây. Hãy khóa màn hình để kiểm tra.', { exact: true })).toBeVisible()
+  await page.clock.fastForward(31_000)
+  await expect(page.getByText('Đã đặt lịch thử sau 5 giây. Hãy khóa màn hình để kiểm tra.', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Thử thông báo', exact: true })).toBeEnabled()
+})
+
 test('new user can set up a cycle and see predictions', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Bắt đầu theo dõi' })).toBeVisible()
   await page.locator('#period-date').fill(dateKey(-1))
